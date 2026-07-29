@@ -33,11 +33,12 @@ class KafkaProducer:
             value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
             key_serializer=lambda k: k.encode("utf-8") if k else None,
             # Idempotent producer — prevents duplicate messages on retry
-            # (aiokafka has no `retries` kwarg; an idempotent producer with
-            # acks="all" already retries internally)
+            # (aiokafka has no `retries` or `max_in_flight_requests_per_connection`
+            # kwargs — those belong to other Kafka client libraries. An idempotent
+            # producer with acks="all" already retries internally and aiokafka
+            # manages in-flight requests itself when enable_idempotence=True.)
             enable_idempotence=True,
             acks="all",  # Wait for all in-sync replicas
-            max_in_flight_requests_per_connection=1,  # Required for idempotence
             compression_type="gzip",
         )
         await self._producer.start()
