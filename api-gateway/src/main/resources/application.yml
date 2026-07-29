@@ -1,0 +1,182 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: payflow-api-gateway
+
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+
+  cloud:
+    gateway:
+      # Global CORS
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+            allowedHeaders: "*"
+            exposedHeaders: ["X-Request-ID", "X-Response-Time", "X-RateLimit-Remaining"]
+
+      # Default filters applied to ALL routes
+      default-filters:
+        - AddRequestHeader=X-Gateway-Version, 1.0.0
+        - AddRequestHeader=X-Forwarded-By, payflow-gateway
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter.replenishRate: 100
+            redis-rate-limiter.burstCapacity: 200
+            redis-rate-limiter.requestedTokens: 1
+        - name: CircuitBreaker
+          args:
+            name: globalCircuitBreaker
+            fallbackUri: forward:/fallback
+
+      routes:
+        # ── Auth Service ──────────────────────────────────────────────────────
+        - id: auth-service
+          uri: ${AUTH_SERVICE_URL:http://auth-service:8000}
+          predicates:
+            - Path=/api/v1/auth/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+
+        # ── Payment Service ───────────────────────────────────────────────────
+        - id: payment-service
+          uri: ${PAYMENT_SERVICE_URL:http://payment-service:8001}
+          predicates:
+            - Path=/api/v1/payments/**
+          filters:
+            - name: AuthenticationFilter  # Custom JWT validation filter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+            - name: CircuitBreaker
+              args:
+                name: paymentCircuitBreaker
+                fallbackUri: forward:/fallback/payment
+            - AddRequestHeader=X-Internal-Service, api-gateway
+            - name: Retry
+              args:
+                retries: 1
+                statuses: BAD_GATEWAY
+
+        # ── Fraud Service (internal only — no public route) ───────────────────
+        - id: fraud-service-admin
+          uri: ${FRAUD_SERVICE_URL:http://fraud-service:8003}
+          predicates:
+            - Path=/api/v1/fraud/cases/**
+            - Path=/api/v1/fraud/blacklist/**
+          filters:
+            - name: AuthenticationFilter
+            - name: RoleCheckFilter
+              args:
+                requiredRole: ADMIN
+            - AddRequestHeader=X-Internal-Service, api-gateway
+
+        # ── Transaction Service ───────────────────────────────────────────────
+        - id: transaction-service
+          uri: ${TRANSACTION_SERVICE_URL:http://transaction-service:8004}
+          predicates:
+            - Path=/api/v1/transactions/**
+          filters:
+            - name: AuthenticationFilter
+            - AddRequestHeader=X-Internal-Service, api-gateway
+
+        # ── Health aggregation ────────────────────────────────────────────────
+        - id: health-payment
+          uri: ${PAYMENT_SERVICE_URL:http://payment-service:8001}
+          predicates:
+            - Path=/health/payment
+          filters:
+            - RewritePath=/health/payment, /health
+
+        - id: health-fraud
+          uri: ${FRAUD_SERVICE_URL:http://fraud-service:8003}
+          predicates:
+            - Path=/health/fraud
+          filters:
+            - RewritePath=/health/fraud, /health
+
+# ─── Resilience4j Circuit Breaker ────────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      globalCircuitBreaker:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 50
+        slowCallRateThreshold: 50
+        slowCallDurationThreshold: 5s
+      paymentCircuitBreaker:
+        slidingWindowSize: 20
+        failureRateThreshold: 40
+        waitDurationInOpenState: 15s
+      authCircuitBreaker:
+        slidingWindowSize: 10
+        failureRateThreshold: 60
+
+  timelimiter:
+    instances:
+      globalCircuitBreaker:
+        timeoutDuration: 10s
+      paymentCircuitBreaker:
+        timeoutDuration: 30s
+
+# ─── Actuator / Observability ─────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics,gateway
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.payflow: DEBUG
+  pattern:
+    console: "%d{ISO8601} [%thread] %-5level %logger{36} [traceId=%X{traceId}] - %msg%n"
+
+# ─── JWT ─────────────────────────────────────────────────────────────────────
+payflow:
+  jwt:
+    secret: ${JWT_SECRET_KEY:super-secret-jwt-key-change-in-production}
+    algorithm: HS256
+  gateway:
+    public-paths:
+      - /api/v1/auth/login
+      - /api/v1/auth/register
+      - /health/**
+      - /fallback/**
+      - /actuator/**

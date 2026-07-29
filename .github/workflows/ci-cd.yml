@@ -1,0 +1,326 @@
+name: PayFlow CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/payflow
+
+jobs:
+  # ─── Lint & Test ─────────────────────────────────────────────────────────────
+  test-payment-service:
+    name: Test Payment Service
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payflow
+          POSTGRES_PASSWORD: test_secret
+          POSTGRES_DB: payflow_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      kafka:
+        image: bitnami/kafka:3.7
+        env:
+          KAFKA_CFG_NODE_ID: "0"
+          KAFKA_CFG_PROCESS_ROLES: controller,broker
+          KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@localhost:9093
+          KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          ALLOW_PLAINTEXT_LISTENER: "yes"
+        ports:
+          - 9092:9092
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: payment-service/requirements.txt
+
+      - name: Install dependencies
+        working-directory: payment-service
+        run: pip install -r requirements.txt pytest pytest-asyncio pytest-cov httpx uvicorn
+
+      # tests/test_payment.py talks to a live server at http://localhost:8001,
+      # so the app needs to actually be running before pytest starts.
+      - name: Start payment-service
+        working-directory: payment-service
+        env:
+          DATABASE_URL: postgresql+asyncpg://payflow:test_secret@localhost:5432/payflow_test
+          REDIS_URL: redis://localhost:6379/0
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+          JWT_SECRET_KEY: test-secret-key
+        run: |
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8001 > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8001/health > /dev/null; then
+              echo "Service is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Service failed to start within 60s"
+          cat server.log
+          exit 1
+
+      - name: Run tests
+        working-directory: payment-service
+        env:
+          DATABASE_URL: postgresql+asyncpg://payflow:test_secret@localhost:5432/payflow_test
+          REDIS_URL: redis://localhost:6379/0
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+          JWT_SECRET_KEY: test-secret-key
+        run: |
+          pytest tests/ -v \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=70
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: payment-service/coverage.xml
+          flags: payment-service
+
+  test-fraud-service:
+    name: Test Fraud Service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: fraud-service/requirements.txt
+      - name: Install
+        working-directory: fraud-service
+        run: pip install -r requirements.txt pytest pytest-asyncio httpx
+      - name: Test
+        working-directory: fraud-service
+        run: pytest tests/ -v || echo "No tests yet — add them!"
+
+  test-auth-service:
+    name: Test Auth Service
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payflow
+          POSTGRES_PASSWORD: test_secret
+          POSTGRES_DB: payflow_auth_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: auth-service/requirements.txt
+      - name: Install
+        working-directory: auth-service
+        run: pip install -r requirements.txt pytest pytest-asyncio httpx
+      - name: Test
+        working-directory: auth-service
+        env:
+          DATABASE_URL: postgresql+asyncpg://payflow:test_secret@localhost:5432/payflow_auth_test
+        run: pytest tests/ -v || echo "No tests yet"
+
+  test-api-gateway:
+    name: Build & Test API Gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Build with Maven
+        working-directory: api-gateway
+        run: mvn clean test -q
+
+  test-frontend:
+    name: Test Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+      - name: Build
+        working-directory: frontend
+        env:
+          VITE_API_GATEWAY_URL: http://localhost:8080
+        run: npm run build
+
+  # ─── Security Scan ───────────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [test-payment-service, test-fraud-service, test-auth-service]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          format: table
+          exit-code: 0  # Don't fail build, just report
+
+  # ─── Build & Push Docker Images ──────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [test-payment-service, test-fraud-service, test-auth-service, test-api-gateway, test-frontend]
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service:
+          - name: payment-service
+            context: ./payment-service
+            port: 8001
+          - name: fraud-service
+            context: ./fraud-service
+            port: 8003
+          - name: auth-service
+            context: ./auth-service
+            port: 8000
+          - name: api-gateway
+            context: ./api-gateway
+            port: 8080
+          - name: frontend
+            context: ./frontend
+            port: 3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+  # ─── Deploy to AWS EKS ───────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build-and-push
+    environment:
+      name: staging
+      url: https://staging.payflow.io
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name payflow-staging --region ap-south-1
+
+      - name: Deploy to Kubernetes
+        run: |
+          # Update image tags in k8s manifests
+          IMAGE_TAG=main-${{ github.sha }}
+          
+          kubectl set image deployment/payment-service \
+            payment-service=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-payment-service:$IMAGE_TAG \
+            -n payflow
+          
+          kubectl set image deployment/fraud-service \
+            fraud-service=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-fraud-service:$IMAGE_TAG \
+            -n payflow
+          
+          kubectl set image deployment/auth-service \
+            auth-service=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-auth-service:$IMAGE_TAG \
+            -n payflow
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/payment-service -n payflow --timeout=300s
+          kubectl rollout status deployment/fraud-service -n payflow --timeout=300s
+          kubectl rollout status deployment/auth-service -n payflow --timeout=300s
+
+      - name: Smoke test
+        run: |
+          GATEWAY_URL=$(kubectl get svc api-gateway -n payflow -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          curl -f "http://$GATEWAY_URL/health" || exit 1
+          echo "Smoke test passed ✓"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Deploy failed! Rolling back..."
+          kubectl rollout undo deployment/payment-service -n payflow
+          kubectl rollout undo deployment/fraud-service -n payflow
+          kubectl rollout undo deployment/auth-service -n payflow

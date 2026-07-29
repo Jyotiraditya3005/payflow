@@ -1,0 +1,265 @@
+{
+  "info": {
+    "name": "PayFlow API",
+    "description": "Complete API collection for PayFlow — Distributed Payment Processing Platform.\n\nSetup:\n1. Start the stack: docker compose up -d\n2. Run the seed script: python scripts/seed_demo.py\n3. Set the {{token}} variable after Login\n\nVariables: gateway_url, token, payment_id, merchant_id",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "gateway_url", "value": "http://localhost:8080", "type": "string"},
+    {"key": "token", "value": "", "type": "string"},
+    {"key": "payment_id", "value": "", "type": "string"},
+    {"key": "merchant_id", "value": "00000000-0000-0000-0000-000000000001", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/auth/register",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@payflow.io\",\n  \"password\": \"demo1234\",\n  \"full_name\": \"Demo Merchant\",\n  \"role\": \"MERCHANT\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  pm.collectionVariables.set('token', data.access_token);",
+                  "  pm.collectionVariables.set('user_id', data.user_id);",
+                  "  console.log('Token saved: ' + data.access_token.substring(0, 20) + '...');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/auth/login",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@payflow.io\",\n  \"password\": \"demo1234\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "url": "{{gateway_url}}/api/v1/auth/me",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        },
+        {
+          "name": "Verify Token",
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/auth/verify",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Initiate Payment (Card)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('payment_id', pm.response.json().id);",
+                  "  console.log('Payment ID saved:', pm.response.json().id);",
+                  "}",
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has idempotency_key', () => pm.expect(pm.response.json().idempotency_key).to.exist);",
+                  "pm.test('Has fraud_score', () => pm.expect(pm.response.json().fraud_score).to.exist);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/payments/",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "X-Device-Fingerprint", "value": "fp_demo_device_001"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"order_{{$randomUUID}}\",\n  \"merchant_id\": \"{{merchant_id}}\",\n  \"customer_id\": \"{{$randomUUID}}\",\n  \"amount\": 299.99,\n  \"currency\": \"USD\",\n  \"payment_method\": \"CARD\",\n  \"card_token\": \"tok_visa_4242\",\n  \"description\": \"Annual SaaS subscription\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Initiate Payment (Bank Transfer)",
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/payments/",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"invoice_{{$randomUUID}}\",\n  \"merchant_id\": \"{{merchant_id}}\",\n  \"customer_id\": \"{{$randomUUID}}\",\n  \"amount\": 15000.00,\n  \"currency\": \"USD\",\n  \"payment_method\": \"BANK_TRANSFER\",\n  \"bank_account_token\": \"ba_demo_123\",\n  \"description\": \"B2B invoice Q2-2026\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Idempotency Test (Retry Same Key)",
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/payments/",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"FIXED_KEY_TEST_IDEMPOTENCY_12345\",\n  \"merchant_id\": \"{{merchant_id}}\",\n  \"customer_id\": \"{{$randomUUID}}\",\n  \"amount\": 100.00,\n  \"currency\": \"USD\",\n  \"payment_method\": \"CARD\",\n  \"card_token\": \"tok_visa_4242\",\n  \"description\": \"Idempotency test — run this twice!\"\n}"
+            }
+          }
+        },
+        {
+          "name": "High Risk Payment (Should be declined)",
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/payments/",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"high_risk_{{$randomUUID}}\",\n  \"merchant_id\": \"{{merchant_id}}\",\n  \"customer_id\": \"{{$randomUUID}}\",\n  \"amount\": 99999.99,\n  \"currency\": \"USD\",\n  \"payment_method\": \"CARD\",\n  \"card_token\": \"tok_suspicious\",\n  \"description\": \"Suspicious large payment\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Payment",
+          "request": {
+            "method": "GET",
+            "url": "{{gateway_url}}/api/v1/payments/{{payment_id}}",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        },
+        {
+          "name": "List Payments",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/payments/?page=1&page_size=20",
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "page_size", "value": "20"},
+                {"key": "status_filter", "value": "COMPLETED", "disabled": true},
+                {"key": "fraud_risk", "value": "HIGH", "disabled": true}
+              ]
+            },
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        },
+        {
+          "name": "Partial Refund",
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/payments/{{payment_id}}/refund",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"refund_{{$randomUUID}}\",\n  \"amount\": 50.00,\n  \"reason\": \"Customer requested partial refund\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Cancel Payment",
+          "request": {
+            "method": "POST",
+            "url": "{{gateway_url}}/api/v1/payments/{{payment_id}}/cancel",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        },
+        {
+          "name": "Payment Analytics Summary",
+          "request": {
+            "method": "GET",
+            "url": "{{gateway_url}}/api/v1/payments/summary/stats",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fraud",
+      "item": [
+        {
+          "name": "List Fraud Cases",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/fraud/cases?risk_level=HIGH&case_status=OPEN",
+              "query": [
+                {"key": "risk_level", "value": "HIGH"},
+                {"key": "case_status", "value": "OPEN"}
+              ]
+            },
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        },
+        {
+          "name": "Blacklist IP",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/fraud/blacklist/ip?ip_address=192.168.99.1",
+              "query": [{"key": "ip_address", "value": "192.168.99.1"}]
+            },
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        },
+        {
+          "name": "Blacklist Customer",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{gateway_url}}/api/v1/fraud/blacklist/customer?customer_id={{$randomUUID}}",
+              "query": [{"key": "customer_id", "value": "{{$randomUUID}}"}]
+            },
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Checks",
+      "item": [
+        {"name": "Gateway Health",     "request": {"method": "GET", "url": "{{gateway_url}}/health"}},
+        {"name": "Payment Service",    "request": {"method": "GET", "url": "http://localhost:8001/health"}},
+        {"name": "Fraud Service",      "request": {"method": "GET", "url": "http://localhost:8003/health"}},
+        {"name": "Auth Service",       "request": {"method": "GET", "url": "http://localhost:8000/health"}},
+        {"name": "Transaction Service","request": {"method": "GET", "url": "http://localhost:8004/health"}},
+        {"name": "Ledger Service",     "request": {"method": "GET", "url": "http://localhost:8005/health"}},
+        {"name": "Notification Svc",   "request": {"method": "GET", "url": "http://localhost:8006/health"}}
+      ]
+    }
+  ]
+}

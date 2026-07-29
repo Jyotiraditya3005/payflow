@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.egg-info/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node
+node_modules/
+dist/
+.env.local
+
+# Java / Maven
+target/
+*.jar
+*.class
+.mvn/
+
+# Docker volumes
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML models (too large for git)
+/tmp/payflow_models/
+*.joblib
+*.pkl
+
+# Secrets
+*.pem
+*.key
+.env
