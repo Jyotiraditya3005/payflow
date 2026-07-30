@@ -59,8 +59,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CI: `deploy-staging` now only runs if `AWS_ACCESS_KEY_ID`/
   `AWS_SECRET_ACCESS_KEY` repo secrets are actually set. Previously it always
   ran and always failed (`Credentials could not be loaded`) since no AWS
-  account, EKS cluster, or Kubernetes manifests exist in this project yet. A
-  new `deploy-staging-not-configured` job runs in its place and prints a
+  account, EKS cluster, or Kubernetes manifests exist in this project yet.
+  Implemented via a `check-deploy-secrets` gate job that checks the secret
+  inside a step and exposes a job output — GitHub Actions does not allow the
+  `secrets` context inside a job-level `if:` at all (a hard parser
+  restriction, confirmed by the workflow failing to parse on first attempt),
+  so the check has to happen one level down. A new
+  `deploy-staging-not-configured` job runs in secrets' absence and prints a
   clear notice, so the pipeline is honest about what's wired up instead of
   showing a permanent red X for infrastructure that was never built.
 
