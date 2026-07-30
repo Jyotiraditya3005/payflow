@@ -23,17 +23,19 @@ like Postgres/Kafka data — omit it to keep data between runs).
 
 ## Path to Cloud Deployment (not yet implemented — roadmap)
 
-`.github/workflows/ci-cd.yml` includes a `deploy-staging` job that runs
-`kubectl set image` / `kubectl rollout status` against an EKS cluster named
-`payflow-staging`. That job assumes Kubernetes `Deployment` objects
-(`payment-service`, `fraud-service`, `auth-service`) already exist in a
-`payflow` namespace — but **no Kubernetes manifests exist anywhere in this
-repo**, and no Terraform/EKS cluster config exists either. As written, that
-job can only succeed against a cluster that was set up manually and never
-described in the codebase; it will fail on a fresh checkout. Either add the
-missing manifests (see the checklist below) or remove/gate the job until
-they exist, so the README's "CI/CD → AWS EKS" claim matches what's actually
-in the repo.
+`.github/workflows/ci-cd.yml`'s `deploy-staging` job runs `kubectl set image`
+/ `kubectl rollout status` against an EKS cluster named `payflow-staging`,
+assuming Kubernetes `Deployment` objects (`payment-service`, `fraud-service`,
+`auth-service`) already exist in a `payflow` namespace. **None of that
+infrastructure exists yet** — no Kubernetes manifests, no Terraform, no EKS
+cluster, no `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` repo secrets.
+
+The job is now gated on those AWS secrets actually being set
+(`secrets.AWS_ACCESS_KEY_ID != ''`). Without them, a separate
+`deploy-staging-not-configured` job runs instead and prints a clear notice —
+so the pipeline shows an honest "not configured" rather than a red X on
+every push. Once the infrastructure below actually exists and the secrets
+are added, the real `deploy-staging` job takes over automatically.
 
 To take this to a real, reproducible cloud target:
 

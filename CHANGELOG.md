@@ -56,6 +56,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Docker build of the gateway, not just CI. Switched the builder stage to
   `maven:3.9-eclipse-temurin-21-alpine`, which bundles both. The runtime
   stage is unaffected (it only needs the JRE, no Maven).
+- CI: `deploy-staging` now only runs if `AWS_ACCESS_KEY_ID`/
+  `AWS_SECRET_ACCESS_KEY` repo secrets are actually set. Previously it always
+  ran and always failed (`Credentials could not be loaded`) since no AWS
+  account, EKS cluster, or Kubernetes manifests exist in this project yet. A
+  new `deploy-staging-not-configured` job runs in its place and prints a
+  clear notice, so the pipeline is honest about what's wired up instead of
+  showing a permanent red X for infrastructure that was never built.
 
 ### Changed
 - Repository cleanup: removed stray template/brace-expansion directories and

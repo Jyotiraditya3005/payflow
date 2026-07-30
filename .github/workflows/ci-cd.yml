@@ -314,10 +314,15 @@ jobs:
             VCS_REF=${{ github.sha }}
 
   # ─── Deploy to AWS EKS ───────────────────────────────────────────────────────
+  # Only attempts a real deploy if AWS credentials are configured as repo
+  # secrets. Without them, `deploy-staging-not-configured` below runs instead
+  # so the pipeline is honest about what's wired up rather than red every run.
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >-
+      github.ref == 'refs/heads/main' && github.event_name == 'push' &&
+      secrets.AWS_ACCESS_KEY_ID != ''
     needs: build-and-push
     environment:
       name: staging
@@ -372,3 +377,17 @@ jobs:
           kubectl rollout undo deployment/payment-service -n payflow
           kubectl rollout undo deployment/fraud-service -n payflow
           kubectl rollout undo deployment/auth-service -n payflow
+
+  deploy-staging-not-configured:
+    name: Deploy to Staging (skipped — not configured)
+    runs-on: ubuntu-latest
+    if: >-
+      github.ref == 'refs/heads/main' && github.event_name == 'push' &&
+      secrets.AWS_ACCESS_KEY_ID == ''
+    needs: build-and-push
+    steps:
+      - run: |
+          echo "::notice::Deploy to Staging is intentionally skipped."
+          echo "No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY secrets are set on"
+          echo "this repo, and no EKS cluster or Kubernetes manifests exist yet"
+          echo "(see docs/DEPLOYMENT.md). This is a documented gap, not a failure."

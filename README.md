@@ -20,7 +20,7 @@
 - Full local observability stack: Prometheus, Grafana, Jaeger — no cloud account required to explore it
 - 📚 **[Full documentation](docs/README.md)** — architecture, API reference, database schema, Kafka event flows, deployment path, security model, and ADRs
 
-> Note: the CI/CD workflow includes a staging-deploy job that targets an AWS EKS cluster, but the Kubernetes manifests it depends on aren't in this repo yet — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for exactly what's implemented versus planned.
+> Note: the CI/CD workflow includes a staging-deploy job that targets an AWS EKS cluster, but the Kubernetes manifests, Terraform, and AWS credentials it depends on aren't in this repo yet — the job is gated to skip cleanly (rather than fail) until they're added. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for exactly what's implemented versus planned.
 
 ---
 
