@@ -43,6 +43,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   process; the 70% gate was unreachable regardless of test quality. Coverage
   is still reported, just not gated. See `docs/TROUBLESHOOTING.md` for the
   real fix (subprocess coverage measurement) if this is worth revisiting.
+- CI: `security-scan` job now sets up Java/Maven and pre-resolves
+  `api-gateway`'s dependencies (`mvn dependency:go-offline`, cached via
+  `actions/cache`) before running Trivy. Trivy's filesystem scan was
+  resolving the Maven dependency tree live and hitting Maven Central's
+  rate limit (`429 Too Many Requests`), which failed the whole job even
+  though `exit-code: 0` was already set to make vulnerability findings
+  themselves non-blocking — the tool itself was crashing, not reporting.
 
 ### Changed
 - Repository cleanup: removed stray template/brace-expansion directories and

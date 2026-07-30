@@ -215,6 +215,30 @@ jobs:
     needs: [test-payment-service, test-fraud-service, test-auth-service]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('api-gateway/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
+
+      # Trivy's fs scanner resolves api-gateway's full Maven dependency tree.
+      # Without a warm ~/.m2 cache it does this over the network and can hit
+      # Maven Central's rate limit (429), which fails the whole job even
+      # though exit-code:0 below is meant to make vulnerability findings
+      # non-blocking. Pre-resolving offline avoids the network call entirely.
+      - name: Pre-resolve Maven dependencies
+        working-directory: api-gateway
+        run: mvn -B dependency:go-offline
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
