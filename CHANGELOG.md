@@ -50,6 +50,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rate limit (`429 Too Many Requests`), which failed the whole job even
   though `exit-code: 0` was already set to make vulnerability findings
   themselves non-blocking — the tool itself was crashing, not reporting.
+- **Dockerfile bug** (not CI-only): `api-gateway/Dockerfile`'s builder stage
+  used `eclipse-temurin:21-jdk-alpine`, which has the JDK but no Maven
+  installed at all (`mvn: not found`, exit code 127) — this would fail any
+  Docker build of the gateway, not just CI. Switched the builder stage to
+  `maven:3.9-eclipse-temurin-21-alpine`, which bundles both. The runtime
+  stage is unaffected (it only needs the JRE, no Maven).
 
 ### Changed
 - Repository cleanup: removed stray template/brace-expansion directories and
