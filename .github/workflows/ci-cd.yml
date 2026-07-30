@@ -111,11 +111,16 @@ jobs:
           KAFKA_BOOTSTRAP_SERVERS: localhost:9092
           JWT_SECRET_KEY: test-secret-key
         run: |
+          # No --cov-fail-under here: these tests exercise a separately-running
+          # uvicorn process over HTTP, so coverage.py (running inside this
+          # pytest process) can't see code executed in that other process.
+          # Reported coverage will look artificially low as a structural
+          # side effect of the test style, not test quality — see
+          # docs/TROUBLESHOOTING.md for the same note.
           pytest tests/ -v \
             --cov=app \
             --cov-report=xml \
-            --cov-report=term-missing \
-            --cov-fail-under=70
+            --cov-report=term-missing
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

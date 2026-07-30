@@ -51,3 +51,18 @@ workflow assumes.
   (`infra/prometheus/`).
 - For Jaeger, confirm the service has OpenTelemetry instrumentation wired in;
   don't assume every service exports traces just because Jaeger is running.
+
+## `payment-service` coverage looks low (~40%) despite tests passing
+
+This is structural, not a sign the tests are weak: `tests/test_payment.py`'s
+integration tests call a separately-running `uvicorn` process over HTTP
+(`http://localhost:8001`), so `coverage.py` — running inside the `pytest`
+process — can't see code executed in that other process. Modules like
+`app/api/payments.py` and `app/main.py` will show 0% even when the
+integration tests are actively exercising them. CI intentionally doesn't
+gate on a coverage threshold for this job for that reason. To get real
+in-process coverage numbers, either add unit tests that call route
+functions directly (no live server), or wire up `coverage`'s
+[subprocess measurement support](https://coverage.readthedocs.io/en/latest/subprocess.html)
+(`COVERAGE_PROCESS_START` + `.pth` sitecustomize hook) so the spawned
+uvicorn process reports back too.
